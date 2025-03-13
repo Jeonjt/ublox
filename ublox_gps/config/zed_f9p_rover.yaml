@@ -5,7 +5,10 @@ ublox_gps_node:
     device: /dev/ttyACM1
     frame_id: gps
     uart1:
-      baudrate: 9600
+      baudrate: 460800
+      in: 35
+      out: 35
+    rate: 5.0
     # TMODE3 Config
     tmode3: 0                   # Survey-In Mode
     #sv_in:
@@ -19,7 +22,7 @@ ublox_gps_node:
       all: true                   # Whether to display all INF messages in console
     
     publish:
-      all: true
+      all: false
       aid:
         hui: false
       nav:
