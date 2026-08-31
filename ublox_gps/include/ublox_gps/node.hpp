@@ -239,6 +239,10 @@ class UbloxNode final : public rclcpp::Node {
   //! Whether to configure the USB port
   /*! Set to true if usb_in & usb_out parameters are set */
   bool set_usb_{false};
+  //! Allow receiver queries and publications but block configuration writes
+  bool read_only_{false};
+  //! Parse an existing NMEA stream without requiring UBX device discovery
+  bool nmea_only_{false};
   //! USB in protocol (see CfgPRT message for constants)
   uint16_t usb_in_{0};
   //! USB out protocol (see CfgPRT message for constants)

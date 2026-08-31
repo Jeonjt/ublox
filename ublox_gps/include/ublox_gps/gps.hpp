@@ -513,7 +513,8 @@ class Gps final {
 template <typename T>
 void Gps::subscribe(
     typename CallbackHandler_<T>::Callback callback, unsigned int rate) {
-  if (!setRate(T::CLASS_ID, T::MESSAGE_ID, rate)) {
+  if (config_on_startup_flag_ &&
+      !setRate(T::CLASS_ID, T::MESSAGE_ID, rate)) {
     return;
   }
   subscribe<T>(callback);

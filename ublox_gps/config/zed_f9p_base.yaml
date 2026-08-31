@@ -5,7 +5,7 @@ ublox_gps_node:
     device: /dev/ttyACM0
     frame_id: gps
     uart1:
-      baudrate: 460800
+      baudrate: 115200
       in: 35
       out: 35
     rate: 5.0
@@ -27,3 +27,10 @@ ublox_gps_node:
         hui: false
       nav:
         posecef: false
+        
+    gnss:
+      sbas: true
+      galileo: true
+      beidou: true
+      qzss: true
+      glonass: true                   # Whether to display all INF messages in console

@@ -194,6 +194,11 @@ UbloxNode::UbloxNode(const rclcpp::NodeOptions & options) : rclcpp::Node("ublox_
 }
 
 void UbloxNode::rtcmCallback(const rtcm_msgs::msg::Message::SharedPtr msg) {
+  if (read_only_) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "Discarding RTCM input because read_only is enabled.");
+    return;
+  }
   gps_->sendRtcm(msg->message);
 }
 
@@ -369,6 +374,8 @@ void UbloxNode::getRosParams() {
 
   // activate/deactivate any config
   this->declare_parameter("config_on_startup", true);
+  read_only_ = this->declare_parameter("read_only", false);
+  nmea_only_ = this->declare_parameter("nmea_only", false);
   this->declare_parameter("raw_data", false);
   this->declare_parameter("clear_bbr", false);
   this->declare_parameter("save_on_shutdown", false);
@@ -471,6 +478,24 @@ void UbloxNode::getRosParams() {
 
   this->declare_parameter("diagnostic_period", kDiagnosticPeriod);
 
+  if (nmea_only_ && !read_only_) {
+    throw std::runtime_error("nmea_only requires read_only=true");
+  }
+  if (read_only_) {
+    if (getRosBoolean(this, "config_on_startup") || load_.load_mask != 0 ||
+        save_.save_mask != 0 || set_usb_ ||
+        getRosBoolean(this, "clear_bbr") ||
+        getRosBoolean(this, "save_on_shutdown") ||
+        getRosBoolean(this, "dat.set") || getRosBoolean(this, "nmea.set")) {
+      throw std::runtime_error(
+          "read_only requires all receiver configuration and persistence "
+          "parameters to be disabled");
+    }
+    RCLCPP_INFO(this->get_logger(),
+                "Receiver configuration is read-only; UBX polls are allowed, "
+                "but CFG and RTCM writes are disabled.");
+  }
+
   // Create publishers based on parameters
   if (getRosBoolean(this, "publish.nav.status")) {
     nav_status_pub_ = this->create_publisher<ublox_msgs::msg::NavSTATUS>("navstatus", 1);
@@ -498,8 +523,12 @@ void UbloxNode::getRosParams() {
     nmea_pub_ = this->create_publisher<nmea_msgs::msg::Sentence>("nmea", 20);
   }
 
-  // Create subscriber for RTCM correction data to enable RTK
-  this->subscription_ = this->create_subscription<rtcm_msgs::msg::Message>("/rtcm", 10, std::bind(&UbloxNode::rtcmCallback, this, std::placeholders::_1));
+  // RTCM is an intentional device write and is unavailable in read-only mode.
+  if (!read_only_) {
+    this->subscription_ = this->create_subscription<rtcm_msgs::msg::Message>(
+        "/rtcm", 10,
+        std::bind(&UbloxNode::rtcmCallback, this, std::placeholders::_1));
+  }
 }
 
 void UbloxNode::keepAlive() {
@@ -736,6 +765,9 @@ bool UbloxNode::configureUblox() {
     if (!gps_->isInitialized()) {
       throw std::runtime_error("Failed to initialize.");
     }
+    if (read_only_) {
+      return true;
+    }
     if (load_.load_mask != 0) {
       RCLCPP_DEBUG(this->get_logger(), "Loading u-blox configuration from memory. %u", load_.load_mask);
       if (!gps_->configure(load_)) {
@@ -813,6 +845,10 @@ bool UbloxNode::configureUblox() {
 }
 
 void UbloxNode::configureInf() {
+  if (read_only_) {
+    return;
+  }
+
   ublox_msgs::msg::CfgINF msg;
   // Subscribe to UBX INF messages
   ublox_msgs::msg::CfgINFBlock block;
@@ -847,7 +883,8 @@ void UbloxNode::configureInf() {
 }
 
 void UbloxNode::initializeIo() {
-  gps_->setConfigOnStartup(getRosBoolean(this, "config_on_startup"));
+  gps_->setConfigOnStartup(
+      !read_only_ && getRosBoolean(this, "config_on_startup"));
 
   std::smatch match;
   if (std::regex_match(device_, match,
@@ -893,16 +930,21 @@ void UbloxNode::initialize() {
 
 
   initializeIo();
-  // Must process Mon VER before setting firmware/hardware params
-  processMonVer();
-  if (protocol_version_ <= 14.0) {
-    if (getRosBoolean(this, "raw_data")) {
-      components_.push_back(std::make_shared<RawDataProduct>(nav_rate_, meas_rate_, updater_, this));
+  if (!nmea_only_) {
+    // Must process Mon VER before setting firmware/hardware params
+    processMonVer();
+    if (protocol_version_ <= 14.0) {
+      if (getRosBoolean(this, "raw_data")) {
+        components_.push_back(std::make_shared<RawDataProduct>(nav_rate_, meas_rate_, updater_, this));
+      }
     }
-  }
-  // Must set firmware & hardware params before initializing diagnostics
-  for (const std::shared_ptr<ComponentInterface> & component : components_) {
-    component->getRosParams();
+    // Must set firmware & hardware params before initializing diagnostics
+    for (const std::shared_ptr<ComponentInterface> & component : components_) {
+      component->getRosParams();
+    }
+  } else {
+    RCLCPP_INFO(this->get_logger(),
+                "NMEA-only receive mode enabled; UBX device discovery is skipped.");
   }
   // Do this last
   initializeRosDiagnostics();
@@ -920,8 +962,10 @@ void UbloxNode::initialize() {
                                             std::bind(&UbloxNode::keepAlive, this));
     }
 
-    poller_ = this->create_wall_timer(std::chrono::milliseconds(static_cast<int64_t>(kPollDuration * 1000.0)),
-                                      std::bind(&UbloxNode::pollMessages, this));
+    if (!nmea_only_) {
+      poller_ = this->create_wall_timer(std::chrono::milliseconds(static_cast<int64_t>(kPollDuration * 1000.0)),
+                                        std::bind(&UbloxNode::pollMessages, this));
+    }
   }
 }
 
